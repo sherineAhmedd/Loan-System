@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
+import { RollbackDisbursementDto } from './dto/rollback-disbursement.dto';
 
 @Injectable()
 export class DisbursementService {
@@ -121,6 +122,78 @@ export class DisbursementService {
     }
 
     return disbursement;
+  }
+
+  async rollbackDisbursement(
+    disbursementId: string,
+    payload: RollbackDisbursementDto,
+  ) {
+    const disbursement = await this.prisma.disbursement.findUnique({
+      where: { id: disbursementId },
+      include: { loan: true },
+    });
+
+    if (!disbursement) {
+      throw new BadRequestException('Disbursement not found');
+    }
+
+    if (disbursement.status === 'rolled_back') {
+      throw new BadRequestException('Disbursement already rolled back');
+    }
+
+    if (disbursement.status !== 'completed') {
+      throw new BadRequestException(
+        'Only completed disbursements can be rolled back',
+      );
+    }
+
+    const reason = payload.reason ?? 'MANUAL_ROLLBACK';
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.repaymentSchedule.deleteMany({
+        where: { loanId: disbursement.loanId },
+      });
+
+      const updated = await tx.disbursement.update({
+        where: { id: disbursement.id },
+        data: {
+          status: 'rolled_back',
+          rolledBackAt: new Date(),
+        },
+        include: {
+          loan: true,
+        },
+      });
+
+      await tx.rollbackRecord.create({
+        data: {
+          transactionId: disbursement.id,
+          originalOperation: 'LOAN_DISBURSEMENT',
+          rollbackReason: reason,
+          compensatingActions: {
+            loanId: disbursement.loanId,
+            disbursementId: disbursement.id,
+          },
+          rolledBackBy: payload.performedBy ?? null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          transactionId: disbursement.id,
+          operation: 'LOAN_DISBURSEMENT_ROLLBACK',
+          userId: payload.performedBy,
+          metadata: {
+            loanId: disbursement.loanId,
+            reason,
+          },
+        },
+      });
+
+      return updated;
+    });
+
+    return result;
   }
 
   private async ensurePlatformFunds(

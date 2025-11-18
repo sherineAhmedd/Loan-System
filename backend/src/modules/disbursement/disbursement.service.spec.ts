@@ -22,6 +22,7 @@ describe('DisbursementService', () => {
     },
     repaymentSchedule: {
       createMany: jest.fn(),
+      deleteMany: jest.fn(),
     },
     payment: {
       aggregate: jest.fn(),
@@ -535,6 +536,101 @@ describe('DisbursementService', () => {
       await expect(service.getDisbursement('non-existent')).rejects.toThrow(
         'Disbursement not found',
       );
+    });
+  });
+
+  describe('rollbackDisbursement', () => {
+    const existingDisbursement = {
+      id: 'disbursement-1',
+      loanId: 'loan-123',
+      amount: 1000,
+      status: 'completed',
+      loan: {
+        id: 'loan-123',
+        borrowerId: 'borrower-1',
+      },
+    };
+
+    it('should rollback a completed disbursement', async () => {
+      mockPrismaService.disbursement.findUnique.mockResolvedValue(
+        existingDisbursement,
+      );
+
+      const txMocks = {
+        repaymentSchedule: {
+          deleteMany: jest.fn().mockResolvedValue({ count: 12 }),
+        },
+        disbursement: {
+          update: jest.fn().mockResolvedValue({
+            ...existingDisbursement,
+            status: 'rolled_back',
+          }),
+        },
+        rollbackRecord: {
+          create: jest.fn().mockResolvedValue({ id: 'rollback-1' }),
+        },
+        auditLog: {
+          create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+        },
+      };
+
+      mockPrismaService.$transaction.mockImplementation(async (callback) =>
+        callback(txMocks),
+      );
+
+      const result = await service.rollbackDisbursement('disbursement-1', {
+        reason: 'Duplicate disbursement',
+        performedBy: 'user-1',
+      });
+
+      expect(result.status).toBe('rolled_back');
+      expect(txMocks.repaymentSchedule.deleteMany).toHaveBeenCalledWith({
+        where: { loanId: existingDisbursement.loanId },
+      });
+      expect(txMocks.disbursement.update).toHaveBeenCalled();
+      expect(txMocks.rollbackRecord.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          transactionId: existingDisbursement.id,
+          rollbackReason: 'Duplicate disbursement',
+          rolledBackBy: 'user-1',
+        }),
+      });
+      expect(txMocks.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          operation: 'LOAN_DISBURSEMENT_ROLLBACK',
+          userId: 'user-1',
+        }),
+      });
+    });
+
+    it('should throw if disbursement not found', async () => {
+      mockPrismaService.disbursement.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.rollbackDisbursement('missing', {}),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should prevent rolling back non-completed disbursement', async () => {
+      mockPrismaService.disbursement.findUnique.mockResolvedValue({
+        ...existingDisbursement,
+        status: 'pending',
+      });
+
+      await expect(
+        service.rollbackDisbursement('disbursement-1', {}),
+      ).rejects.toThrow('Only completed disbursements can be rolled back');
+    });
+
+    it('should prevent rolling back twice', async () => {
+      mockPrismaService.disbursement.findUnique.mockResolvedValue({
+        ...existingDisbursement,
+        status: 'rolled_back',
+      });
+
+      await expect(
+        service.rollbackDisbursement('disbursement-1', {}),
+      ).rejects.toThrow('Disbursement already rolled back');
     });
   });
 

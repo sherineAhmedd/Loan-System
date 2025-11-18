@@ -6,9 +6,10 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
 import { PrismaService } from './prisma/prisma.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { LoanModule } from './modules/loan/loan.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
-  imports: [DisbursementModule, RepaymentsModule , PrismaModule, LoanModule],
+  imports: [DisbursementModule, RepaymentsModule , PrismaModule, LoanModule, AuditModule],
   controllers: [AppController],
   providers: [AppService, PrismaService],
 })
