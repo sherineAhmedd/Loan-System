@@ -20,25 +20,34 @@ export class DisbursementService {
       throw new BadRequestException('Loan not found');
     }
 
-    if (loan.status !== 'APPROVED') {
-      throw new BadRequestException(
-        'Only approved loans can be disbursed',
-      );
-    }
-
-    if (loan.disbursement) {
-      throw new BadRequestException(
-        'This loan has already been disbursed',
-      );
-    }
-
     try {
       const result = await this.prisma.$transaction(async (tx) => {
+        const loanSnapshot = await tx.loan.findUnique({
+          where: { id: loan.id },
+          include: { disbursement: true },
+        });
+
+        if (!loanSnapshot) {
+          throw new BadRequestException('Loan not found');
+        }
+
+        if (loanSnapshot.status !== 'APPROVED') {
+          throw new BadRequestException(
+            'Only approved loans can be disbursed',
+          );
+        }
+
+        if (loanSnapshot.disbursement) {
+          throw new BadRequestException(
+            'This loan has already been disbursed',
+          );
+        }
+
         await this.ensurePlatformFunds(tx, payload.amount);
 
         const pendingDisbursement = await tx.disbursement.create({
           data: {
-            loanId: loan.id,
+            loanId: loanSnapshot.id,
             amount: payload.amount,
             disbursementDate: payload.disbursementDate,
             status: payload.status ?? 'pending',
@@ -46,7 +55,7 @@ export class DisbursementService {
         });
 
         const scheduleData = this.buildRepaymentSchedule({
-          loanId: loan.id,
+          loanId: loanSnapshot.id,
           amount: payload.amount,
           interestRate: payload.interestRate,
           tenor: payload.tenor,
@@ -62,7 +71,7 @@ export class DisbursementService {
             transactionId: pendingDisbursement.id,
             operation: 'LOAN_DISBURSEMENT',
             metadata: {
-              loanId: loan.id,
+              loanId: loanSnapshot.id,
               borrowerId: payload.borrowerId,
               amount: payload.amount,
               currency: payload.currency,

@@ -25,14 +25,16 @@ export class CreateRepaymentDto {
   paymentDate?: Date;
 
   @Type(() => Number)
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  principalPaid: number;
+  principalPaid?: number;
 
   @Type(() => Number)
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  interestPaid: number;
+  interestPaid?: number;
 
   @Type(() => Number)
   @IsOptional()
