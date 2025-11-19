@@ -9,6 +9,17 @@ async function bootstrap() {
     .setTitle('Loan System API')
     .setDescription('API documentation for the loan management service')
     .setVersion('1.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Enter JWT token for system authentication',
+        in: 'header',
+      },
+      'JWT-auth', // This name will be used in the @ApiBearerAuth() decorator
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

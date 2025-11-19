@@ -20,27 +20,87 @@ export class RepaymentsService {
     return loan;
   }
 
-  async recordRepayment(payload: CreateRepaymentDto) {
-    await this.ensureLoanExists(payload.loanId);
+  async recordRepayment(payload: CreateRepaymentDto, user: any) {
+    const loan = await this.ensureLoanExists(payload.loanId);
 
     const paymentDate = payload.paymentDate ?? new Date();
-    const daysLate = payload.daysLate ?? 0;
-    const lateFeePaid = payload.lateFeePaid ?? 0;
+    
+    // Calculate days late if not provided
+    let daysLate = payload.daysLate ?? 0;
+    if (daysLate === 0) {
+      const schedule = await this.prisma.repaymentSchedule.findFirst({
+        where: { loanId: payload.loanId, status: { in: ['PENDING', 'PARTIALLY_PAID'] } },
+        orderBy: { dueDate: 'asc' },
+      });
+      if (schedule && paymentDate > schedule.dueDate) {
+        daysLate = Math.floor((paymentDate.getTime() - schedule.dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      }
+    }
 
-    const payment = await this.prisma.payment.create({
-      data: {
-        loanId: payload.loanId,
-        amount: payload.amount,
-        paymentDate,
-        principalPaid: payload.principalPaid,
-        interestPaid: payload.interestPaid,
-        lateFeePaid,
-        daysLate,
-        status: payload.status ?? 'POSTED',
-      },
+    // Calculate late fee if not provided (example: 1% per day late, max 10%)
+    let lateFeePaid = payload.lateFeePaid ?? 0;
+    if (lateFeePaid === 0 && daysLate > 0) {
+      const lateFeeRate = 0.01; // 1% per day
+      const maxLateFeeRate = 0.10; // Max 10%
+      const effectiveDays = Math.min(daysLate, 10); // Cap at 10 days for calculation
+      lateFeePaid = payload.amount * lateFeeRate * effectiveDays;
+      lateFeePaid = Math.min(lateFeePaid, payload.amount * maxLateFeeRate);
+    }
+
+    const userId = user?.sub || user?.service || 'system';
+    const serviceName = user?.service || 'system';
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          loanId: payload.loanId,
+          amount: payload.amount,
+          paymentDate,
+          principalPaid: payload.principalPaid,
+          interestPaid: payload.interestPaid,
+          lateFeePaid,
+          daysLate,
+          status: payload.status ?? 'POSTED',
+        },
+      });
+
+      // Create comprehensive audit log for repayment creation
+      await tx.auditLog.create({
+        data: {
+          transactionId: payment.id,
+          operation: 'REPAYMENT_CREATE',
+          userId: userId,
+          metadata: {
+            loanId: payload.loanId,
+            borrowerId: loan.borrowerId,
+            paymentId: payment.id,
+            amount: payload.amount,
+            principalPaid: payload.principalPaid,
+            interestPaid: payload.interestPaid,
+            lateFeePaid: lateFeePaid,
+            lateFeeCalculated: payload.lateFeePaid === undefined || payload.lateFeePaid === 0,
+            lateFeeCalculation: {
+              daysLate: daysLate,
+              rate: daysLate > 0 ? 0.01 : 0,
+              calculatedAmount: lateFeePaid,
+            },
+            daysLate: daysLate,
+            daysLateCalculated: payload.daysLate === undefined || payload.daysLate === 0,
+            paymentDate: paymentDate,
+            status: payload.status ?? 'POSTED',
+            performedBy: {
+              userId: userId,
+              service: serviceName,
+            },
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+
+      return payment;
     });
 
-    return payment;
+    return result;
   }
 
   async getPaymentHistory(loanId: string) {
@@ -61,7 +121,7 @@ export class RepaymentsService {
     });
   }
 
-  async calculateDueNow(loanId: string) {
+  async calculateDueNow(loanId: string, user: any) {
     const loan = await this.ensureLoanExists(loanId);
 
     const now = new Date();
@@ -125,9 +185,30 @@ export class RepaymentsService {
     const outstandingPrincipal = Math.max(duePrincipal - paidPrincipal, 0);
     const outstandingInterest = Math.max(dueInterest - paidInterest, 0);
 
-    const totalDue = outstandingPrincipal + outstandingInterest;
+    // Calculate potential late fees for overdue installments
+    const lateFeeCalculations = dueSchedules.map((schedule) => {
+      const daysLate = Math.floor((now.getTime() - schedule.dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      const lateFeeRate = 0.01; // 1% per day
+      const maxLateFeeRate = 0.10; // Max 10%
+      const scheduleTotal = Number(schedule.principalAmount) + Number(schedule.interestAmount);
+      const effectiveDays = Math.min(Math.max(daysLate, 0), 10);
+      const calculatedLateFee = daysLate > 0 ? Math.min(scheduleTotal * lateFeeRate * effectiveDays, scheduleTotal * maxLateFeeRate) : 0;
+      
+      return {
+        installmentNumber: schedule.installmentNumber,
+        dueDate: schedule.dueDate,
+        daysLate: daysLate,
+        calculatedLateFee: Number(calculatedLateFee.toFixed(2)),
+      };
+    });
 
-    return {
+    const totalDue = outstandingPrincipal + outstandingInterest;
+    const totalCalculatedLateFees = lateFeeCalculations.reduce((sum, calc) => sum + calc.calculatedLateFee, 0);
+
+    const userId = user?.sub || user?.service || 'system';
+    const serviceName = user?.service || 'system';
+
+    const calculationResult = {
       loanId: loan.id,
       borrowerId: loan.borrowerId,
       loanStatus: loan.status,
@@ -138,6 +219,7 @@ export class RepaymentsService {
         interestDue: Number(outstandingInterest.toFixed(2)),
         totalDue: Number(totalDue.toFixed(2)),
         totalPaidLateFees: Number(paidLateFees.toFixed(2)),
+        totalCalculatedLateFees: Number(totalCalculatedLateFees.toFixed(2)),
       },
       installmentsDue: dueSchedules.map((schedule) => ({
         installmentNumber: schedule.installmentNumber,
@@ -146,6 +228,7 @@ export class RepaymentsService {
         interestDue: Number(schedule.interestAmount),
         status: schedule.status,
       })),
+      lateFeeCalculations: lateFeeCalculations,
       nextInstallment: nextInstallment
         ? {
             installmentNumber: nextInstallment.installmentNumber,
@@ -155,6 +238,36 @@ export class RepaymentsService {
           }
         : null,
     };
+
+    // Log the calculation operation
+    await this.prisma.auditLog.create({
+      data: {
+        transactionId: loanId,
+        operation: 'REPAYMENT_CALCULATION',
+        userId: userId,
+        metadata: {
+          loanId: loanId,
+          borrowerId: loan.borrowerId,
+          calculationDate: now,
+          calculations: {
+            principalDue: calculationResult.summary.principalDue,
+            interestDue: calculationResult.summary.interestDue,
+            totalDue: calculationResult.summary.totalDue,
+            overdueInstallments: calculationResult.summary.overdueInstallments,
+            lateFeeCalculations: lateFeeCalculations,
+            totalCalculatedLateFees: calculationResult.summary.totalCalculatedLateFees,
+            totalPaidLateFees: calculationResult.summary.totalPaidLateFees,
+          },
+          performedBy: {
+            userId: userId,
+            service: serviceName,
+          },
+          timestamp: new Date().toISOString(),
+        },
+      },
+    });
+
+    return calculationResult;
   }
 }
 
