@@ -1,10 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  fetchAuditLogs,
-  fetchDueNow,
-  fetchPaymentHistory,
-  fetchRepaymentSchedule,
-} from './service';
+import { fetchAuditLogs, fetchDueNow, fetchPaymentHistory, fetchRepaymentSchedule,} from './service';
 
 type AsyncState<T> = {
   data: T;

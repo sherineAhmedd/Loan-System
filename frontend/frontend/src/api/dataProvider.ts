@@ -1,3 +1,4 @@
+// src/dataProvider.ts
 import type { DataProvider } from 'react-admin';
 import { API_URL, httpClient, buildQueryString } from './httpClient';
 
@@ -17,51 +18,21 @@ const normalizeLoan = (loan: Loan) => ({
   interestRate: Number(loan.interestRate),
 });
 
-const toArrayResponse = (json: any) => {
-  if (Array.isArray(json)) {
-    return { data: json, total: json.length };
-  }
-  if (Array.isArray(json?.data)) {
-    return { data: json.data, total: json.total ?? json.data.length };
-  }
-  return { data: [], total: 0 };
-};
-
 const notImplemented = (name: string) =>
   Promise.reject(new Error(`${name} is not implemented in data provider`));
 
 const dataProvider: DataProvider = {
   getList: async (resource, params) => {
-    switch (resource) {
-      case 'loans': {
-        const filterQuery: Record<string, string> = {};
-        if (params.filter?.q) {
-          filterQuery.q = params.filter.q;
-        }
-        if (params.filter?.borrowerId) {
-          filterQuery.borrowerId = params.filter.borrowerId;
-        }
-        if (params.pagination) {
-          filterQuery.page = String(params.pagination.page);
-          filterQuery.perPage = String(params.pagination.perPage);
-        }
-        const query = buildQueryString(filterQuery);
-        const { json } = await httpClient(`${API_URL}/api/loans${query}`);
-        const { data, total } = toArrayResponse(json);
-        return {
-          data: data.map(normalizeLoan),
-          total,
-        };
-      }
-      default:
-        return notImplemented(`getList(${resource})`);
-    }
+    console.log('getList called but not implemented yet', resource, params);
+    return { data: [], total: 0 };
   },
 
   getOne: async (resource, params) => {
     switch (resource) {
       case 'loans': {
-        const { json } = await httpClient(`${API_URL}/loan/${params.id}`);
+        const url = `${API_URL}/loans/${params.id}`;
+        console.log('GET loan URL:', url);
+        const { json } = await httpClient(url);
         return { data: normalizeLoan(json) as any };
       }
       default:
@@ -100,4 +71,3 @@ const dataProvider: DataProvider = {
 };
 
 export default dataProvider;
-

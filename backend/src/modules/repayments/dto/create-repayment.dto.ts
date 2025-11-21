@@ -8,8 +8,9 @@ import {
   IsString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { RepaymentRequestPayload } from '../interface/repayment-calculation.interface';
 
-export class CreateRepaymentDto {
+export class CreateRepaymentDto implements RepaymentRequestPayload {
   @IsUUID()
   @IsNotEmpty()
   loanId: string;

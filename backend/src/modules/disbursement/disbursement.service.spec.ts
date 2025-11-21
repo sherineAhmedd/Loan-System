@@ -3,6 +3,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { DisbursementService } from './disbursement.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
+import { RollbacksService } from '../rollback/rollback.service';
 
 describe('DisbursementService', () => {
   let service: DisbursementService;
@@ -33,6 +34,12 @@ describe('DisbursementService', () => {
     rollbackRecord: {
       create: jest.fn(),
     },
+  };
+
+  const mockRollbacksService = {
+    rollbackTransaction: jest.fn(),
+    canRollback: jest.fn(),
+    getAuditTrail: jest.fn(),
   };
 
   const mockLoanData = {
@@ -70,11 +77,24 @@ describe('DisbursementService', () => {
           provide: PrismaService,
           useValue: mockPrismaService,
         },
+        {
+          provide: RollbacksService,
+          useValue: mockRollbacksService,
+        },
       ],
     }).compile();
 
     service = module.get<DisbursementService>(DisbursementService);
     prisma = module.get<PrismaService>(PrismaService);
+    mockRollbacksService.canRollback.mockResolvedValue(true);
+    mockRollbacksService.rollbackTransaction.mockResolvedValue({
+      transactionId: 'disbursement-1',
+      originalOperation: 'disbursement',
+      rollbackReason: 'reason',
+      rollbackTimestamp: new Date(),
+      compensatingActions: [],
+      rolledBackBy: 'system',
+    });
   });
 
   afterEach(() => {
@@ -552,55 +572,39 @@ describe('DisbursementService', () => {
     };
 
     it('should rollback a completed disbursement', async () => {
-      mockPrismaService.disbursement.findUnique.mockResolvedValue(
-        existingDisbursement,
-      );
-
-      const txMocks = {
-        repaymentSchedule: {
-          deleteMany: jest.fn().mockResolvedValue({ count: 12 }),
-        },
-        disbursement: {
-          update: jest.fn().mockResolvedValue({
-            ...existingDisbursement,
-            status: 'rolled_back',
-          }),
-        },
-        rollbackRecord: {
-          create: jest.fn().mockResolvedValue({ id: 'rollback-1' }),
-        },
-        auditLog: {
-          create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
-        },
+      const rolledBackSnapshot = {
+        ...existingDisbursement,
+        status: 'rolled_back',
       };
 
-      mockPrismaService.$transaction.mockImplementation(async (callback) =>
-        callback(txMocks),
-      );
+      mockPrismaService.disbursement.findUnique
+        .mockResolvedValueOnce(existingDisbursement)
+        .mockResolvedValueOnce(rolledBackSnapshot);
+
+      mockRollbacksService.canRollback.mockResolvedValue(true);
+      mockRollbacksService.rollbackTransaction.mockResolvedValue({
+        transactionId: existingDisbursement.id,
+        originalOperation: 'disbursement',
+        rollbackReason: 'Duplicate disbursement',
+        rollbackTimestamp: new Date(),
+        compensatingActions: [],
+        rolledBackBy: 'user-1',
+      });
 
       const result = await service.rollbackDisbursement('disbursement-1', {
         reason: 'Duplicate disbursement',
         performedBy: 'user-1',
       });
 
-      expect(result.status).toBe('rolled_back');
-      expect(txMocks.repaymentSchedule.deleteMany).toHaveBeenCalledWith({
-        where: { loanId: existingDisbursement.loanId },
-      });
-      expect(txMocks.disbursement.update).toHaveBeenCalled();
-      expect(txMocks.rollbackRecord.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          transactionId: existingDisbursement.id,
-          rollbackReason: 'Duplicate disbursement',
-          rolledBackBy: 'user-1',
-        }),
-      });
-      expect(txMocks.auditLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          operation: 'LOAN_DISBURSEMENT_ROLLBACK',
-          userId: 'user-1',
-        }),
-      });
+      expect(mockRollbacksService.canRollback).toHaveBeenCalledWith(
+        'disbursement-1',
+      );
+      expect(mockRollbacksService.rollbackTransaction).toHaveBeenCalledWith(
+        'disbursement-1',
+        'Duplicate disbursement',
+        'user-1',
+      );
+      expect(result).toEqual(rolledBackSnapshot);
     });
 
     it('should throw if disbursement not found', async () => {
@@ -609,28 +613,19 @@ describe('DisbursementService', () => {
       await expect(
         service.rollbackDisbursement('missing', {}),
       ).rejects.toThrow(BadRequestException);
+      expect(mockRollbacksService.canRollback).not.toHaveBeenCalled();
     });
 
-    it('should prevent rolling back non-completed disbursement', async () => {
-      mockPrismaService.disbursement.findUnique.mockResolvedValue({
-        ...existingDisbursement,
-        status: 'pending',
-      });
+    it('should prevent rolling back when not eligible', async () => {
+      mockPrismaService.disbursement.findUnique.mockResolvedValue(
+        existingDisbursement,
+      );
+      mockRollbacksService.canRollback.mockResolvedValue(false);
 
       await expect(
         service.rollbackDisbursement('disbursement-1', {}),
-      ).rejects.toThrow('Only completed disbursements can be rolled back');
-    });
-
-    it('should prevent rolling back twice', async () => {
-      mockPrismaService.disbursement.findUnique.mockResolvedValue({
-        ...existingDisbursement,
-        status: 'rolled_back',
-      });
-
-      await expect(
-        service.rollbackDisbursement('disbursement-1', {}),
-      ).rejects.toThrow('Disbursement already rolled back');
+      ).rejects.toThrow('Disbursement is not eligible for rollback');
+      expect(mockRollbacksService.rollbackTransaction).not.toHaveBeenCalled();
     });
   });
 

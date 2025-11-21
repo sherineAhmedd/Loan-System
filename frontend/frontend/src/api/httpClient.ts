@@ -1,10 +1,35 @@
 import { fetchUtils } from 'react-admin';
 
 export const API_URL =
-  import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? 'http://localhost:3000';
+  import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? 'http://localhost:3000/api';
 
-// JWT token for system authentication (configured via environment variable)
-const JWT_TOKEN = import.meta.env.VITE_JWT_TOKEN || '';
+const normalizeBearerPrefix = (token: string) => {
+  if (!token?.trim()) {
+    return '';
+  }
+  return token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+};
+
+const resolveJwtToken = () => {
+  const envToken = import.meta.env.VITE_JWT_TOKEN?.trim();
+  if (envToken) {
+    return envToken;
+  }
+
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  try {
+    const storedToken =
+      window.localStorage.getItem('authToken') ??
+      window.sessionStorage.getItem('authToken');
+    return storedToken ?? '';
+  } catch (error) {
+    console.warn('Unable to read auth token from storage:', error);
+    return '';
+  }
+};
 
 export const httpClient = (
   url: string,
@@ -19,9 +44,9 @@ export const httpClient = (
     opts.headers.set('Content-Type', 'application/json');
   }
 
-  // Add JWT token to Authorization header for system authentication
-  if (JWT_TOKEN) {
-    opts.headers.set('Authorization', `Bearer ${JWT_TOKEN}`);
+  const token = resolveJwtToken();
+  if (token) {
+    opts.headers.set('Authorization', normalizeBearerPrefix(token));
   }
 
   return fetchUtils.fetchJson(url, opts);

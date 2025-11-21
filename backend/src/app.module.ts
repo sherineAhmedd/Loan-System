@@ -9,6 +9,7 @@ import { LoanModule } from './modules/loan/loan.module';
 import { AuditModule } from './audit/audit.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
+import { RollbacksModule } from './modules/rollback/rollback.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuthModule } from './auth/auth.module';
     AuditModule,
     AuthModule,
     ConfigModule.forRoot({ isGlobal: true }),
+    RollbacksModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],

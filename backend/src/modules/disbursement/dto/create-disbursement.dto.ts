@@ -1,11 +1,23 @@
-import {IsDate, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsUUID,Min,Validate,} from 'class-validator';
+import {
+  IsDate,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsUUID,
+  Min,
+  Validate,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsAfterPropertyDate } from '../validators/is-after-property-date.validator';
+import * as loanDisbursementInterface from '../interface/loan-disbursement.interface';
+import type { DisbursementStatus } from '../interface/loan-disbursement.interface';
 
 const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'EGP'];
-const STATUS_VALUES = ['pending', 'completed', 'failed', 'rolled_back'] as const;
+const STATUS_VALUES: loanDisbursementInterface.DisbursementStatus[] = ['pending', 'completed', 'failed', 'rolled_back'];
 
-export class CreateDisbursementDto {
+export class CreateDisbursementDto implements loanDisbursementInterface.CreateDisbursementPayload {
   @IsUUID()
   @IsNotEmpty()
   loanId: string;
@@ -44,5 +56,5 @@ export class CreateDisbursementDto {
 
   @IsOptional()
   @IsIn(STATUS_VALUES)
-  status?: (typeof STATUS_VALUES)[number];
+  status?: DisbursementStatus;
 }

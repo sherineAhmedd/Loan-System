@@ -3,12 +3,17 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
 import { RollbackDisbursementDto } from './dto/rollback-disbursement.dto';
+import { RepaymentScheduleEntry } from './interface/loan-disbursement.interface';
+import { RollbacksService } from '../rollback/rollback.service';
 
 @Injectable()
 export class DisbursementService {
   private readonly logger = new Logger(DisbursementService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rollbacksService: RollbacksService,
+  ) {}
 
   async createDisbursement(payload: CreateDisbursementDto) {
     const loan = await this.prisma.loan.findUnique({
@@ -20,34 +25,21 @@ export class DisbursementService {
       throw new BadRequestException('Loan not found');
     }
 
+    if (loan.status !== 'APPROVED') {
+      throw new BadRequestException('Only approved loans can be disbursed');
+    }
+
+    if (loan.disbursement) {
+      throw new BadRequestException('This loan has already been disbursed');
+    }
+
     try {
       const result = await this.prisma.$transaction(async (tx) => {
-        const loanSnapshot = await tx.loan.findUnique({
-          where: { id: loan.id },
-          include: { disbursement: true },
-        });
-
-        if (!loanSnapshot) {
-          throw new BadRequestException('Loan not found');
-        }
-
-        if (loanSnapshot.status !== 'APPROVED') {
-          throw new BadRequestException(
-            'Only approved loans can be disbursed',
-          );
-        }
-
-        if (loanSnapshot.disbursement) {
-          throw new BadRequestException(
-            'This loan has already been disbursed',
-          );
-        }
-
         await this.ensurePlatformFunds(tx, payload.amount);
 
         const pendingDisbursement = await tx.disbursement.create({
           data: {
-            loanId: loanSnapshot.id,
+            loanId: loan.id,
             amount: payload.amount,
             disbursementDate: payload.disbursementDate,
             status: payload.status ?? 'pending',
@@ -55,7 +47,7 @@ export class DisbursementService {
         });
 
         const scheduleData = this.buildRepaymentSchedule({
-          loanId: loanSnapshot.id,
+          loanId: loan.id,
           amount: payload.amount,
           interestRate: payload.interestRate,
           tenor: payload.tenor,
@@ -71,7 +63,7 @@ export class DisbursementService {
             transactionId: pendingDisbursement.id,
             operation: 'LOAN_DISBURSEMENT',
             metadata: {
-              loanId: loanSnapshot.id,
+              loanId: loan.id,
               borrowerId: payload.borrowerId,
               amount: payload.amount,
               currency: payload.currency,
@@ -92,7 +84,8 @@ export class DisbursementService {
       });
 
       return result;
-    } catch (error) {
+    } 
+    catch (error) {
       this.logger.error('Disbursement failed', error.stack);
 
       await this.prisma.rollbackRecord.create({
@@ -146,69 +139,31 @@ export class DisbursementService {
       throw new BadRequestException('Disbursement not found');
     }
 
-    if (disbursement.status === 'rolled_back') {
-      throw new BadRequestException('Disbursement already rolled back');
-    }
-
-    if (disbursement.status !== 'completed') {
-      throw new BadRequestException(
-        'Only completed disbursements can be rolled back',
-      );
-    }
-
     const reason = payload.reason ?? 'MANUAL_ROLLBACK';
+    const eligible = await this.rollbacksService.canRollback(disbursementId);
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      await tx.repaymentSchedule.deleteMany({
-        where: { loanId: disbursement.loanId },
-      });
+    if (!eligible) {
+      throw new BadRequestException('Disbursement is not eligible for rollback');
+    }
 
-      const updated = await tx.disbursement.update({
-        where: { id: disbursement.id },
-        data: {
-          status: 'rolled_back',
-          rolledBackAt: new Date(),
-        },
-        include: {
-          loan: true,
-        },
-      });
+    await this.rollbacksService.rollbackTransaction(
+      disbursementId,
+      reason,
+      payload.performedBy,
+    );
 
-      await tx.rollbackRecord.create({
-        data: {
-          transactionId: disbursement.id,
-          originalOperation: 'LOAN_DISBURSEMENT',
-          rollbackReason: reason,
-          compensatingActions: {
-            loanId: disbursement.loanId,
-            disbursementId: disbursement.id,
-          },
-          rolledBackBy: payload.performedBy ?? null,
-        },
-      });
+    return this.getDisbursement(disbursementId);
+  }
 
-      await tx.auditLog.create({
-        data: {
-          transactionId: disbursement.id,
-          operation: 'LOAN_DISBURSEMENT_ROLLBACK',
-          userId: payload.performedBy,
-          metadata: {
-            loanId: disbursement.loanId,
-            reason,
-          },
-        },
-      });
-
-      return updated;
-    });
-
-    return result;
+  async getDisbursementAuditTrail(disbursementId: string) {
+    return this.rollbacksService.getAuditTrail(disbursementId);
   }
 
   private async ensurePlatformFunds(
     tx: Prisma.TransactionClient,
     requestedAmount: number,
-  ) {
+  ) 
+  {
     const [incoming, outgoing] = await Promise.all([
       tx.payment.aggregate({ _sum: { amount: true } }),
       tx.disbursement.aggregate({ _sum: { amount: true } }),
@@ -229,7 +184,8 @@ export class DisbursementService {
     tenor: number;
     interestRate: number;
     firstPaymentDate: Date;
-  }) {
+  }): RepaymentScheduleEntry[]
+   {
     const { loanId, amount, tenor, interestRate, firstPaymentDate } = params;
 
     const monthlyRate = interestRate / 12 / 100;
@@ -239,17 +195,8 @@ export class DisbursementService {
         : (amount * monthlyRate) /
           (1 - Math.pow(1 + monthlyRate, -tenor));
 
-    type ScheduleEntry = {
-      loanId: string;
-      installmentNumber: number;
-      dueDate: Date;
-      principalAmount: string;
-      interestAmount: string;
-      status: string;
-    };
-
     let remainingPrincipal = amount;
-    const schedule: ScheduleEntry[] = [];
+    const schedule: RepaymentScheduleEntry[] = [];
 
     for (let i = 1; i <= tenor; i++) {
       const interestPortion =

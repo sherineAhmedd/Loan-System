@@ -1,7 +1,7 @@
 import { Admin, CustomRoutes, Resource } from 'react-admin';
 import { Route } from 'react-router-dom';
 import dataProvider from './api/dataProvider';
-import { LoanList, LoanShow } from './components/loans/LoanList';
+// import { LoanList, LoanShow } from './components/loans/LoanList';
 import { DisbursementCreate } from './components/disbursements/DisbursementCreate';
 import { RepaymentCreate } from './components/repayments/RepaymentCreate';
 import { RollbackPage } from './components/rollback/RollbackPage';
@@ -9,7 +9,8 @@ import { AuditLogViewer } from './components/audit/AuditLogViewer';
 import Dashboard from './components/dashboard/Dashboard';
 import { AppLayout } from './components/layout/AppLayout';
 import './App.css';
-
+import {  LoanList, LoanShow } from './components/loans/LoanList';
+// list={LoanList}
 function App() {
   return (
     <Admin dataProvider={dataProvider} dashboard={Dashboard} layout={AppLayout}>

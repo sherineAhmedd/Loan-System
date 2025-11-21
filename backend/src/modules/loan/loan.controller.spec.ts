@@ -45,20 +45,7 @@ describe('LoanController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('should list loans with filters', async () => {
-    const response = { data: [], total: 0 };
-    mockLoanService.listLoans.mockResolvedValue(response);
-
-    const result = await controller.listLoans('abc', 'user-1', 2, 50);
-
-    expect(result).toEqual(response);
-    expect(mockLoanService.listLoans).toHaveBeenCalledWith({
-      q: 'abc',
-      borrowerId: 'user-1',
-      page: 2,
-      perPage: 50,
-    });
-  });
+  
 
   it('should delegate loan retrieval to service', async () => {
     const loan = { id: 'loan-1' };

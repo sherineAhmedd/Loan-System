@@ -1,15 +1,22 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateRepaymentDto } from './dto/create-repayment.dto';
 import { Decimal } from '@prisma/client/runtime/binary';
+import {
+  InstallmentDue,
+  LateFeeCalculation,
+  RepaymentCalculationResult,
+} from './interface/repayment-calculation.interface';
+import { RollbacksService } from '../rollback/rollback.service';
 
 @Injectable()
 export class RepaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rollbacksService: RollbacksService,
+  ) {}
 
-  // -----------------------------
-  // Safe number conversion for Prisma Decimals
-  // -----------------------------
   private toNumberSafe(value: Decimal | number | string | null | undefined): number {
     if (value === null || value === undefined) return 0;
     if (typeof value === 'number') return value;
@@ -18,9 +25,6 @@ export class RepaymentsService {
     return 0;
   }
 
-  // -----------------------------
-  // Convert any value to Prisma Decimal
-  // -----------------------------
   private toDecimalSafe(value: number | string | Decimal | null | undefined): Decimal {
     if (value instanceof Decimal) return value;
     return new Decimal(value ?? 0);
@@ -54,10 +58,7 @@ export class RepaymentsService {
 
     return loan;
   }
-
-  // -----------------------------
-  // Record repayment
-  // -----------------------------
+//record repayemnt
   async recordRepayment(payload: CreateRepaymentDto, user: any) {
     this.assertValidLoanId(payload.loanId);
     const loan = await this.ensureLoanExists(payload.loanId);
@@ -117,7 +118,16 @@ export class RepaymentsService {
     const finalPrincipalPortion = parseFloat(Math.max(0, Math.min(principalRemaining, desiredPrincipal)).toFixed(2));
     const finalInterestPortion = parseFloat(Math.min(interestPortion, paymentAmount).toFixed(2));
     const finalLateFeePortion = parseFloat(Math.min(lateFeePortion, paymentAmount - finalInterestPortion).toFixed(2));
-
+    
+    console.log({
+  principalRemaining,
+  accruedInterest,
+  daysSinceLastPayment,
+  interestPortion,
+  finalPrincipalPortion,
+  finalInterestPortion,
+  finalLateFeePortion
+});
     const userId = user?.sub || user?.service || 'system';
     const serviceName = user?.service || 'system';
 
@@ -190,7 +200,7 @@ export class RepaymentsService {
       }
 
       // Log the full error for debugging
-      console.error('❌ recordRepayment error:', {
+      console.error(' recordRepayment error:', {
         message: err?.message,
         stack: err?.stack,
         name: err?.name,
@@ -232,7 +242,10 @@ export class RepaymentsService {
     });
   }
 
-  async calculateDueNow(loanId: string, user: any) {
+  async calculateDueNow(
+    loanId: string,
+    user: any,
+  ): Promise<RepaymentCalculationResult> {
     this.assertValidLoanId(loanId);
     const loan = await this.ensureLoanExists(loanId);
 
@@ -282,7 +295,7 @@ export class RepaymentsService {
     const outstandingPrincipal = Math.max(duePrincipal - paidPrincipal, 0);
     const outstandingInterest = Math.max(dueInterest - paidInterest, 0);
 
-    const lateFeeCalculations = dueSchedules.map((schedule) => {
+    const lateFeeCalculations: LateFeeCalculation[] = dueSchedules.map((schedule) => {
       const daysLate = Math.floor(
         (now.getTime() - schedule.dueDate.getTime()) / (1000 * 60 * 60 * 24),
       );
@@ -314,7 +327,7 @@ export class RepaymentsService {
     const userId = user?.sub || user?.service || 'system';
     const serviceName = user?.service || 'system';
 
-    const calculationResult = {
+    const calculationResult: RepaymentCalculationResult = {
       loanId: loan.id,
       borrowerId: loan.borrowerId,
       loanStatus: loan.status,
@@ -327,7 +340,7 @@ export class RepaymentsService {
         totalPaidLateFees: Number(paidLateFees.toFixed(2)),
         totalCalculatedLateFees: Number(totalCalculatedLateFees.toFixed(2)),
       },
-      installmentsDue: dueSchedules.map((schedule) => ({
+      installmentsDue: dueSchedules.map<InstallmentDue>((schedule) => ({
         installmentNumber: schedule.installmentNumber,
         dueDate: schedule.dueDate,
         principalDue: this.toNumberSafe(schedule.principalAmount),
@@ -341,8 +354,25 @@ export class RepaymentsService {
             dueDate: nextInstallment.dueDate,
             principalDue: this.toNumberSafe(nextInstallment.principalAmount),
             interestDue: this.toNumberSafe(nextInstallment.interestAmount),
+            status: nextInstallment.status,
           }
         : null,
+    };
+
+    const auditMetadata: Prisma.InputJsonObject = {
+      loanId,
+      borrowerId: loan.borrowerId,
+      calculationDate: now.toISOString(),
+      calculations: { ...calculationResult.summary },
+      lateFeeCalculations: lateFeeCalculations.map((calc) => ({
+        ...calc,
+        dueDate: calc.dueDate.toISOString(),
+      })),
+      performedBy: {
+        userId,
+        service: serviceName,
+      },
+      timestamp: new Date().toISOString(),
     };
 
     await this.prisma.auditLog.create({
@@ -350,21 +380,34 @@ export class RepaymentsService {
         transactionId: loanId,
         operation: 'REPAYMENT_CALCULATION',
         userId,
-        metadata: {
-          loanId,
-          borrowerId: loan.borrowerId,
-          calculationDate: now,
-          calculations: calculationResult.summary,
-          lateFeeCalculations,
-          performedBy: {
-            userId,
-            service: serviceName,
-          },
-          timestamp: new Date().toISOString(),
-        },
+        metadata: auditMetadata,
       },
     });
 
     return calculationResult;
+  }
+
+  async rollbackRepaymentTransaction(
+    paymentId: string,
+    reason: string,
+    user?: any,
+  ) {
+    if (!paymentId) {
+      throw new BadRequestException('paymentId is required');
+    }
+
+    const canRollback = await this.rollbacksService.canRollback(paymentId);
+
+    if (!canRollback) {
+      throw new BadRequestException('Repayment is not eligible for rollback');
+    }
+
+    const performer = user?.sub || user?.service || undefined;
+
+    return this.rollbacksService.rollbackTransaction(paymentId, reason, performer);
+  }
+
+  async getRepaymentAuditTrail(paymentId: string) {
+    return this.rollbacksService.getAuditTrail(paymentId);
   }
 }
