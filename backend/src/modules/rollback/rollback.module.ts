@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaModule } from 'src/prisma/prisma.module';
 import { RollbacksService } from './rollback.service';
 
 @Module({
-  providers: [RollbacksService, PrismaService],
+  imports: [PrismaModule],
+  providers: [RollbacksService],
   exports: [RollbacksService],
 })
 export class RollbacksModule {}

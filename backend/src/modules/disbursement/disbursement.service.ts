@@ -1,21 +1,44 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
 import { RollbackDisbursementDto } from './dto/rollback-disbursement.dto';
 import { RepaymentScheduleEntry } from './interface/loan-disbursement.interface';
 import { RollbacksService } from '../rollback/rollback.service';
+import { LoggerService } from '../../common/logging/logger.service';
 
 @Injectable()
 export class DisbursementService {
-  private readonly logger = new Logger(DisbursementService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly rollbacksService: RollbacksService,
+    private readonly logger: LoggerService,
   ) {}
 
   async createDisbursement(payload: CreateDisbursementDto) {
+    const start = Date.now();
+    const txnId = payload.loanId; // use loanId for idempotency/transaction correlation until we create a disbursement id
+
+    this.logger.info('Starting loan disbursement', {
+      operation: 'disbursement:start',
+      transactionId: txnId,
+      metadata: {
+        loanId: payload.loanId,
+        borrowerId: payload.borrowerId,
+        amount: payload.amount,
+        currency: payload.currency,
+      },
+    });
+
+    // Validate amount is not negative
+    if (payload.amount < 0) {
+      throw new BadRequestException('Amount cannot be negative');
+    }
+
     const loan = await this.prisma.loan.findUnique({
       where: { id: payload.loanId },
       include: { disbursement: true },
@@ -30,11 +53,17 @@ export class DisbursementService {
     }
 
     if (loan.disbursement) {
-      throw new BadRequestException('This loan has already been disbursed');
+      throw new ConflictException('This loan has already been disbursed');
     }
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
+        this.logger.debug('Checking platform funds', {
+          operation: 'disbursement:funds_check',
+          transactionId: txnId,
+          metadata: { requestedAmount: payload.amount },
+        });
+
         await this.ensurePlatformFunds(tx, payload.amount);
 
         const pendingDisbursement = await tx.disbursement.create({
@@ -44,6 +73,12 @@ export class DisbursementService {
             disbursementDate: payload.disbursementDate,
             status: payload.status ?? 'pending',
           },
+        });
+
+        this.logger.info('Created pending disbursement', {
+          operation: 'disbursement:pending_created',
+          transactionId: pendingDisbursement.id,
+          metadata: { loanId: loan.id, amount: payload.amount },
         });
 
         const scheduleData = this.buildRepaymentSchedule({
@@ -57,6 +92,12 @@ export class DisbursementService {
         if (scheduleData.length) {
           await tx.repaymentSchedule.createMany({ data: scheduleData });
         }
+
+        this.logger.info('Generated repayment schedule', {
+          operation: 'disbursement:schedule_generated',
+          transactionId: pendingDisbursement.id,
+          metadata: { tenor: payload.tenor, firstPaymentDate: payload.firstPaymentDate, installments: scheduleData.length },
+        });
 
         await tx.auditLog.create({
           data: {
@@ -80,13 +121,24 @@ export class DisbursementService {
           },
         });
 
+        this.logger.info('Disbursement transaction completed', {
+          operation: 'disbursement:completed',
+          transactionId: completed.id,
+          duration: Date.now() - start,
+          metadata: { loanId: loan.id, amount: payload.amount },
+        });
+
         return completed;
       });
 
       return result;
     } 
     catch (error) {
-      this.logger.error('Disbursement failed', error.stack);
+      this.logger.error('Disbursement failed', {
+        operation: 'disbursement:error',
+        transactionId: txnId,
+        error: { message: error?.message, stack: error?.stack },
+      });
 
       await this.prisma.rollbackRecord.create({
         data: {

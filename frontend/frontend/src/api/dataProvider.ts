@@ -1,6 +1,6 @@
 // src/dataProvider.ts
 import type { DataProvider } from 'react-admin';
-import { API_URL, httpClient, buildQueryString } from './httpClient';
+import { API_URL, httpClient} from './httpClient';
 
 type Loan = {
   id: string;

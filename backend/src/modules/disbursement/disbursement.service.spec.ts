@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
 import { DisbursementService } from './disbursement.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
@@ -186,7 +190,7 @@ describe('DisbursementService', () => {
       expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException if loan already disbursed (idempotency check)', async () => {
+    it('should throw ConflictException if loan already disbursed (idempotency check)', async () => {
       const loanWithDisbursement = {
         ...mockLoanData,
         disbursement: {
@@ -200,10 +204,23 @@ describe('DisbursementService', () => {
 
       await expect(
         service.createDisbursement(mockDisbursementDto),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
       await expect(
         service.createDisbursement(mockDisbursementDto),
       ).rejects.toThrow('This loan has already been disbursed');
+
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException for negative amount', async () => {
+      const invalidData = { ...mockDisbursementDto, amount: -1000 };
+
+      await expect(service.createDisbursement(invalidData)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.createDisbursement(invalidData)).rejects.toThrow(
+        'Amount cannot be negative',
+      );
 
       expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
     });

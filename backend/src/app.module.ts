@@ -5,6 +5,7 @@ import { DisbursementModule } from './modules/disbursement/disbursement.module';
 import { RepaymentsModule } from './modules/repayments/repayments.module';
 import { PrismaService } from './prisma/prisma.service';
 import { PrismaModule } from './prisma/prisma.module';
+import { LoggerService } from './common/logging/logger.service';
 import { LoanModule } from './modules/loan/loan.module';
 import { AuditModule } from './audit/audit.module';
 import { ConfigModule } from '@nestjs/config';
@@ -23,6 +24,6 @@ import { RollbacksModule } from './modules/rollback/rollback.module';
     RollbacksModule,
   ],
   controllers: [AppController],
-  providers: [AppService, PrismaService],
+  providers: [AppService],
 })
 export class AppModule {}

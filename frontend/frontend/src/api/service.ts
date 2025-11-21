@@ -15,20 +15,20 @@ export const rollbackDisbursement = async (
 };
 
 export const fetchPaymentHistory = async (loanId: string) => {
-  const { json } = await httpClient(`${API_URL}/api/repayments/${loanId}`);
+  const { json } = await httpClient(`${API_URL}/repayments/${loanId}`);
   return Array.isArray(json) ? json : json?.data ?? [];
 };
 
 export const fetchRepaymentSchedule = async (loanId: string) => {
   const { json } = await httpClient(
-    `${API_URL}/api/repayments/${loanId}/schedule`,
+    `${API_URL}/repayments/${loanId}/schedule`,
   );
   return Array.isArray(json) ? json : json?.data ?? [];
 };
 
 export const fetchDueNow = async (loanId: string) => {
   const { json } = await httpClient(
-    `${API_URL}/api/repayments/${loanId}/calculate`,
+    `${API_URL}/repayments/${loanId}/calculate`,
   );
   return json;
 };
@@ -38,7 +38,7 @@ export const fetchAuditLogs = async (
   search?: string,
   operation?: string,
 ) => {
-  const { json } = await httpClient(`${API_URL}/loan/${loanId}/audit-trail`);
+  const { json } = await httpClient(`${API_URL}/loans/${loanId}/audit-trail`);
   let logs = Array.isArray(json) ? json : json?.data ?? [];
 
   if (search) {
