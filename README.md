@@ -94,6 +94,16 @@ npx prisma generate
 npm run seed
 npm run start:dev
 ```
+> Before running `npm run start:dev`, you can set your local `DATABASE_URL` environment variable and launch Prisma Studio for inspecting the database visually:  
+> 
+> ```powershell
+> $env:DATABASE_URL="postgresql://postgres:shereen123%21@localhost:5432/loan-database?schema=public"
+> npx prisma studio
+> ```
+> 
+> This allows you to view and manage your database records in a browser interface before starting the backend.
+then npm run start
+
 
 2. From `frontend/frontend/` (optional for dev UI):
 ```powershell
