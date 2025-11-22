@@ -27,11 +27,40 @@ DATABASE_URL=postgresql://admin:password@postgres:5432/loan_system
 LOG_LEVEL=info
 NODE_ENV=development
 
-# JWT and other secrets (example)
-JWT_SECRET=replace_with_secret
-```
+## JWT Authentication
 
-Make sure `.gitignore` includes `node_modules`, `.env`, and Prisma migration lock files.
+Protected endpoints require a JWT token. This section explains how to generate it on the backend and use it in the frontend.
+
+### Backend: Generating Tokens
+
+You can generate a token for testing using one of these methods:
+
+**Using Docker (recommended):**  
+```powershell
+# Default token (service='loan-system', expires 24h)
+docker-compose exec backend ts-node src/auth/generate-token.ts 
+
+# Custom service and expiration
+docker-compose exec backend ts-node src/auth/generate-token.ts "company-name" "7d"
+
+#Direct TypeScript execution (local dev):
+cd backend
+ts-node src/auth/generate-token.ts --service=company-name --expires=7d
+
+#Use the token:
+Swagger UI: Click Authorize,
+Direct API requests: Include header: -H "Authorization: Bearer YOUR_TOKEN_HERE"
+
+#Frontend: Using Tokens
+The frontend reads a JWT from a .env file in the project root
+
+Step 1: Create .env in project root
+VITE_JWT_TOKEN=<token-here>
+
+Step 2: Access in frontend
+In the React app, the token is read via import.meta.env.VITE_JWT_TOKEN
+All API requests (via httpClient / Axios) automatically include this token in the Authorization header.
+
 
 **Start with Docker (recommended)**
 The provided `docker-compose.yml` runs a Postgres DB, the backend and the frontend. It also runs Prisma migrations on backend start.
