@@ -8,6 +8,7 @@ import { DisbursementService } from './disbursement.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
 import { RollbacksService } from '../rollback/rollback.service';
+import { LoggerService } from '../../common/logging/logger.service';
 
 describe('DisbursementService', () => {
   let service: DisbursementService;
@@ -44,6 +45,13 @@ describe('DisbursementService', () => {
     rollbackTransaction: jest.fn(),
     canRollback: jest.fn(),
     getAuditTrail: jest.fn(),
+  };
+
+  const mockLoggerService = {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
   };
 
   const mockLoanData = {
@@ -84,6 +92,10 @@ describe('DisbursementService', () => {
         {
           provide: RollbacksService,
           useValue: mockRollbacksService,
+        },
+        {
+          provide: LoggerService,
+          useValue: mockLoggerService,
         },
       ],
     }).compile();

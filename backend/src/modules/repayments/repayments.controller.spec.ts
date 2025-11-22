@@ -45,13 +45,17 @@ describe('RepaymentsController', () => {
       interestPaid: 20,
     } as CreateRepaymentDto;
 
+    const mockReq = {
+      user: { sub: 'test-user', service: 'test-service' },
+    };
+
     const created = { id: 'payment-1' };
     mockService.recordRepayment.mockResolvedValue(created);
 
-    const result = await controller.recordRepayment(dto);
+    const result = await controller.recordRepayment(dto, mockReq);
 
     expect(result).toEqual(created);
-    expect(service.recordRepayment).toHaveBeenCalledWith(dto);
+    expect(service.recordRepayment).toHaveBeenCalledWith(dto, mockReq.user);
   });
 
   it('should get payment history', async () => {
@@ -75,13 +79,17 @@ describe('RepaymentsController', () => {
   });
 
   it("should calculate what's due", async () => {
+    const mockReq = {
+      user: { sub: 'test-user', service: 'test-service' },
+    };
+
     const payload = { summary: { totalDue: 100 } };
     mockService.calculateDueNow.mockResolvedValue(payload);
 
-    const result = await controller.calculateDue('loan-1');
+    const result = await controller.calculateDue('loan-1', mockReq);
 
     expect(result).toEqual(payload);
-    expect(service.calculateDueNow).toHaveBeenCalledWith('loan-1');
+    expect(service.calculateDueNow).toHaveBeenCalledWith('loan-1', mockReq.user);
   });
 });
 

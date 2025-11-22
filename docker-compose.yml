@@ -47,7 +47,7 @@ services:
       - "5173:5173"
     environment:
       VITE_API_URL: http://localhost:3000/api
-      VITE_JWT_TOKEN: ${VITE_JWT_TOKEN:-}
+      VITE_JWT_TOKEN: ${VITE_JWT_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJsb2FuLXN5c3RlbSIsInNlcnZpY2UiOiJsb2FuLXN5c3RlbSIsImlhdCI6MTc2MzgxNjg3OSwiZXhwIjoxNzY2NDA4ODc5fQ.bqsyImovtcZ1oaYyuDQFHerbYPkVKfaAsbf6ZbeRLNA}
     depends_on:
       backend:
         condition: service_healthy

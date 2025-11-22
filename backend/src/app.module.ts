@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
+import { RootController } from './root.controller';
 import { AppService } from './app.service';
 import { DisbursementModule } from './modules/disbursement/disbursement.module';
 import { RepaymentsModule } from './modules/repayments/repayments.module';
@@ -23,7 +24,7 @@ import { RollbacksModule } from './modules/rollback/rollback.module';
     ConfigModule.forRoot({ isGlobal: true }),
     RollbacksModule,
   ],
-  controllers: [AppController],
+  controllers: [RootController, AppController],
   providers: [AppService],
 })
 export class AppModule {}
